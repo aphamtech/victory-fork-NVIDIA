@@ -19,6 +19,16 @@ pub fn run(
     // A title that relaunched itself: the old process must be gone first.
     victory_hle::modules::lifecycle::wait_for_previous();
     let cfg = victory_core::Config::load()?;
+    // The resolution the title renders at, and the layer's speed switches:
+    // both are read before the title asks about either.
+    let (display_width, display_height) = cfg.display_size();
+    victory_gpu::dxgi::set_display_size(display_width, display_height);
+    victory_gpu::settings::set_performance(cfg.performance());
+    println!(
+        "display        {display_width}x{display_height} ([graphics] display_mode, \
+         VICTORY_DISPLAY_MODE)"
+    );
+    println!("performance    {}", victory_gpu::settings::summary());
     let original = std::fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;
     let prepared = victory_loader::prepare(&original)?;
     let hash = prepared.original_hash.to_hex();
@@ -61,6 +71,32 @@ pub fn run(
         storage.display(),
         title.storage_bytes >> 20
     );
+    // The title renders for the resolution its own saved video settings
+    // name, not the display mode reported to it (a file an earlier run
+    // wrote wins), so the configured size goes into that file too.
+    if execute {
+        match crate::video::apply_display(&storage, (display_width, display_height))? {
+            crate::video::Applied::Changed { was: Some(was) } => println!(
+                "title video    {display_width}x{display_height} in settings.xml (was {}x{})",
+                was.0, was.1
+            ),
+            crate::video::Applied::Changed { was: None } | crate::video::Applied::Same => println!(
+                "title video    {display_width}x{display_height} in settings.xml"
+            ),
+            crate::video::Applied::NoFile => println!(
+                "title video    no settings.xml yet: the title takes the reported mode, \
+                 {display_width}x{display_height}"
+            ),
+            crate::video::Applied::Disabled => println!(
+                "title video    settings.xml left as it is (VICTORY_DISPLAY_SETTINGS=0): the title \
+                 renders at the resolution its own settings name"
+            ),
+            crate::video::Applied::NotFound => println!(
+                "title video    settings.xml holds no resolutionFullscreen: left as it is (the \
+                 title's own menu then decides)"
+            ),
+        }
+    }
     // The console's fixed drives: the package as `G:`, temporary files `T:`.
     victory_hle::modules::files::mount_at('G', title_dir);
     let temp = cfg.data_subdir(&format!("{:08X}/temp", title.id))?;

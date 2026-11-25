@@ -111,17 +111,25 @@ pub extern "system" fn CreateWindowExA(
 }
 
 /// A console title sizes its window to its render target (
-/// the title: 3840x2160 on a Series X), which can exceed the host's screen.
-/// A top-level window larger than the work area is shrunk to fit, keeping
-/// its proportions, and centred; what it shows is scaled to it (the swap
-/// chain stretches).
+/// the title: the display mode it was given, which is the resolution the
+/// game renders at), which can exceed the host's screen. A top-level window
+/// larger than the work area is shrunk to fit, keeping its proportions; one
+/// far smaller than the work area (`auto`, the default) is shown enlarged by
+/// the largest whole factor that fits, up to [`SCALE_MOST`]. What it shows
+/// is scaled to it either way (the swap chain stretches).
 fn fit(parent: HWND, x: i32, y: i32, width: i32, height: i32) -> (i32, i32, i32, i32) {
     let mut area = RECT::default();
     // SAFETY: `area` receives the primary monitor's work area.
     let known =
         unsafe { wm::SystemParametersInfoW(wm::SPI_GETWORKAREA, 0, (&raw mut area).cast(), 0) };
-    let fitted = fit_into(&area, width, height);
-    if !parent.is_null() || known == 0 || fitted == (width, height) {
+    if !parent.is_null() || known == 0 {
+        return (x, y, width, height);
+    }
+    let mut fitted = fit_into(&area, width, height);
+    if fitted == (width, height) {
+        fitted = fit_up(&area, fitted, window_scale());
+    }
+    if fitted == (width, height) {
         return (x, y, width, height);
     }
     tracing::info!(width, height, to = ?fitted, "title window fitted to the screen");
@@ -129,6 +137,45 @@ fn fit(parent: HWND, x: i32, y: i32, width: i32, height: i32) -> (i32, i32, i32,
     let left = area.left + (area.right - area.left - w) / 2;
     let top = area.top + (area.bottom - area.top - h) / 2;
     (left, top, w, h)
+}
+
+/// The largest whole factor [`SCALE_MOST`] a small window takes.
+const SCALE_MOST: i32 = 8;
+
+/// How much larger than its render target the title's window is shown:
+/// `VICTORY_WINDOW_SCALE=auto` (unset: the largest whole factor that fits
+/// the screen, up to 8), `0` (the window is the render target's size, which
+/// is 640x480 by default) or `1` to `8`. The resolution itself does not
+/// change; the swap chain stretches the picture to the window.
+fn window_scale() -> i32 {
+    static SCALE: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let asked = std::env::var("VICTORY_WINDOW_SCALE").unwrap_or_default();
+        match asked.trim() {
+            "" | "auto" => 0, // the largest whole factor that fits: see `fit_up`
+            other => other.parse::<i32>().map_or(0, |n| n.clamp(0, SCALE_MOST)),
+        }
+    })
+}
+
+/// `width` x `height` enlarged by `scale` whole times, or (0) by the most
+/// whole times that still fits `area` in both directions; neither ever
+/// passes what fits.
+fn fit_up(area: &RECT, (width, height): (i32, i32), scale: i32) -> (i32, i32) {
+    let (aw, ah) = (area.right - area.left, area.bottom - area.top);
+    if width <= 0 || height <= 0 || aw <= 0 || ah <= 0 {
+        return (width, height);
+    }
+    let most = (aw / width).min(ah / height);
+    let factor = if scale > 0 {
+        scale.min(most)
+    } else {
+        most.clamp(1, SCALE_MOST)
+    };
+    if factor <= 1 {
+        return (width, height);
+    }
+    (width * factor, height * factor)
 }
 
 /// `width` x `height` scaled down to fit `area`, or unchanged if it fits
@@ -345,6 +392,24 @@ mod tests {
             fit_into(&area, wm::CW_USEDEFAULT, 0),
             (wm::CW_USEDEFAULT, 0)
         );
+    }
+
+    #[test]
+    fn small_windows_are_shown_enlarged() {
+        let area = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1040,
+        };
+        // 640x480, the default render resolution: twice is 1280x960, which
+        // fits; three times does not (1440x1080 is too tall).
+        assert_eq!(fit_up(&area, (640, 480), 0), (1280, 960));
+        assert_eq!(fit_up(&area, (640, 480), 1), (640, 480));
+        assert_eq!(fit_up(&area, (640, 480), 3), (1280, 960));
+        // Whatever fits stays as it is.
+        assert_eq!(fit_up(&area, (1920, 1040), 0), (1920, 1040));
+        assert_eq!(fit_up(&area, (0, 0), 0), (0, 0));
     }
 
     #[test]

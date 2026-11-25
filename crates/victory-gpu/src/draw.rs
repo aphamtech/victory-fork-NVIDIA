@@ -136,8 +136,21 @@ struct Window {
     scratch: ID3D12Resource,
 }
 
-/// The most records clamped in one pass ([`windows`]).
-const WINDOW_MOST: u64 = 64;
+/// The most records clamped in one pass ([`windows`]): `VICTORY_WINDOW_MOST`
+/// (16 to 1024, 64 unless set).
+fn window_most() -> u64 {
+    static MOST: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MOST.get_or_init(|| {
+        std::env::var("VICTORY_WINDOW_MOST")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map_or(64, |n| n.clamp(16, 1024))
+    })
+}
+
+/// The fewest records a window opens with (then twice as many each time,
+/// up to [`window_most`]).
+const WINDOW_FEWEST: u32 = 16;
 
 /// Whether indirect draws that read record after record of one argument
 /// buffer are clamped a window at a time (`VICTORY_INDIRECT_WINDOW=1`; off
@@ -152,7 +165,7 @@ const WINDOW_MOST: u64 = 64;
 ///
 /// With the switch, when a draw asks for a record a short step after the
 /// one drawn before, the clamp takes that record and the ones that step
-/// apart after it (16, then twice as many each time, [`WINDOW_MOST`] at
+/// apart after it (16, then twice as many each time, [`window_most`] at
 /// most, never past the buffer) into
 /// the list's scratch buffer in one pass, and the draws that follow read
 /// their record there with no pass of ours and no barrier (the scratch
@@ -187,7 +200,16 @@ const WINDOW_MOST: u64 = 64;
 /// run with windows was announced that way seconds ahead.
 fn windows() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VICTORY_INDIRECT_WINDOW").is_some_and(|v| v == "1")) && !crate::drvwatch::tripped()
+    *ON.get_or_init(|| {
+        let on = crate::settings::on("VICTORY_INDIRECT_WINDOW", 2);
+        if on {
+            tracing::info!(
+                most = window_most(),
+                "indirect records are clamped a window at a time (VICTORY_INDIRECT_WINDOW)"
+            );
+        }
+        on
+    }) && !crate::drvwatch::tripped()
 }
 
 /// Whether a record that is not on the window's walk opens a window of its
@@ -216,9 +238,9 @@ fn windows() -> bool {
 fn jump_windows() -> bool {
     /// 0 off, 1 on, 2 in turn.
     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    match *MODE.get_or_init(|| match std::env::var("VICTORY_WINDOW_JUMP").as_deref() {
-        Ok("1") => 1,
-        Ok("alt") => 2,
+    match *MODE.get_or_init(|| match crate::settings::word("VICTORY_WINDOW_JUMP", 2, "1").as_deref() {
+        Some("1") => 1,
+        Some("alt") => 2,
         _ => 0,
     }) {
         0 => false,
@@ -3270,8 +3292,8 @@ impl State {
                             && step % 4 == 0
                             && (w.records == 1 || step == u64::from(w.step));
                         if walks {
-                            let fit = (args.left(arguments) / step).min(WINDOW_MOST) as u32;
-                            (step as u32, (if w.records == 1 { 16 } else { w.records * 2 }).min(fit).max(1))
+                            let fit = (args.left(arguments) / step).min(window_most()) as u32;
+                            (step as u32, (if w.records == 1 { WINDOW_FEWEST } else { w.records * 2 }).min(fit).max(1))
                         } else {
                             (stride, max)
                         }

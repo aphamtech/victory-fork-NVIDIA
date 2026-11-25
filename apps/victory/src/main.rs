@@ -10,6 +10,7 @@ mod progress;
 mod run;
 mod shader;
 mod translate;
+mod video;
 
 use std::path::PathBuf;
 
@@ -257,6 +258,13 @@ fn show_config() -> Result<()> {
     println!("game_dir    : {}", status(&cfg.game_dir));
     println!("cache_dir   : {}", cfg.cache_dir.display());
     println!("data_dir    : {}", cfg.data_dir.display());
+    let (width, height) = cfg.display_size();
+    println!("display     : {width}x{height} ([graphics] display_mode, VICTORY_DISPLAY_MODE)");
+    println!(
+        "performance : tier {} of {} ([graphics] performance, VICTORY_PERF)",
+        cfg.performance(),
+        victory_core::PERFORMANCE_TIERS
+    );
     for t in &cfg.test_titles {
         println!("test_title  : {}", status(&Some(t.clone())));
     }

@@ -17,3 +17,22 @@ game_dir = 'D:\victory-data\game'
 # Other Xbox Series titles used to test platform-level code.
 # env: VICTORY_TEST_TITLES (separated by ';')
 test_titles = []
+
+[graphics]
+# The resolution the title renders the game at: what it is told its
+# display is, and what a run writes into the title's own saved video
+# settings (its settings menu keeps that file, and the file wins).
+# WIDTHxHEIGHT, 640x480 up to 7680x4320.     env: VICTORY_DISPLAY_MODE
+# Default: 640x480.       env: VICTORY_DISPLAY_SETTINGS=0 keeps the file
+# as it is (the title's own menu then decides).
+display_mode = '640x480'
+
+# The performance profile: the layer's measured speed switches, by tier.
+#   0  every switch at its own default (how the layer ran before)
+#   1  the ones the title cannot see (copies in place, texture refreshes
+#      that do not wait for the title remapping memory)
+#   2  also the ones that overlap the card with the title's own work: the
+#      fastest measured set, and the default
+# Any single switch can still be set by hand; its own variable wins.
+# env: VICTORY_PERF
+performance = 2

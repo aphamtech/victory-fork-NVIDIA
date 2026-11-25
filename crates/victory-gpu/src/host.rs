@@ -2114,19 +2114,20 @@ pub(crate) fn late() -> bool {
     late_stage() > 0
 }
 
-/// `VICTORY_LATE_WAIT`: 0 (off), 1, or 2 ([`late_exact`]).
+/// `VICTORY_LATE_WAIT`: 0 (off), 1, 2 ([`late_exact`]) or 3
+/// ([`late_free_present`]); the performance profile's top tier asks 3.
 fn late_stage() -> u8 {
     static STAGE: OnceLock<u8> = OnceLock::new();
     *STAGE.get_or_init(|| {
         if std::env::var_os("VICTORY_GPU_TIMING").is_some() {
             return 0;
         }
-        match std::env::var("VICTORY_LATE_WAIT").as_deref() {
-            Ok("1") => 1,
-            Ok("2") => 2,
-            Ok("3") => 3,
+        match crate::settings::word("VICTORY_LATE_WAIT", 2, "3").as_deref() {
+            Some("1") => 1,
+            Some("2") => 2,
+            Some("3") => 3,
             // The relay alone: on top of stage 3.
-            Err(_) if crate::shadow::relay() => 3,
+            None if crate::shadow::relay() => 3,
             _ => 0,
         }
     })
@@ -3121,7 +3122,7 @@ fn stale_under_flights(runs: &[&HostList]) -> bool {
         // flights twice a frame, 50 ms of the submitting thread.)
         static RUNS: OnceLock<usize> = OnceLock::new();
         let mut runs_left = *RUNS.get_or_init(|| {
-            std::env::var("VICTORY_MERGE_RUNS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(512, |n| n.clamp(1, 1 << 16))
+            crate::settings::number("VICTORY_MERGE_RUNS", 2, 4096).map_or(512, |n| n.clamp(1, 1 << 16) as usize)
         });
         return spans.iter().any(|(shadow, from, to)| shadow.merge_under_writes(*from, *to - *from, &mut runs_left));
     }

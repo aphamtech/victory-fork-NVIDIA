@@ -9,5 +9,8 @@ pub mod config;
 pub mod logging;
 pub mod policy;
 
-pub use config::Config;
+pub use config::{
+    Config, DEFAULT_DISPLAY_MODE, DEFAULT_PERFORMANCE, PERFORMANCE_TIERS, display_mode_ok,
+    parse_display_mode,
+};
 pub use policy::{PolicyError, ensure_outside_repo};

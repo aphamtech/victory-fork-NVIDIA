@@ -219,29 +219,59 @@ struct Mode {
 }
 const _: () = assert!(size_of::<Mode>() == 32);
 
-/// The size of the display the console reports: `VICTORY_DISPLAY_MODE=WxH`
-/// if set (as a console reports the television it is plugged into: a
-/// Series X on a 1080p set lists a 1080p mode), else 3840x2160.
+/// The size of the display the console reports: what [`set_display_size`]
+/// asked for (the config file's `[graphics] display_mode`), else
+/// `VICTORY_DISPLAY_MODE=WxH`, else [`victory_core::DEFAULT_DISPLAY_MODE`]
+/// (640x480: the resolution the game renders at, since every screen-bound
+/// render target the title makes takes this size). A console reports the
+/// television it is plugged into: a Series X on a 1080p set lists a 1080p
+/// mode.
+///
 /// shortcut: not yet the host display's own size by default; make it so
 /// once a title is seen to render for the mode it is given.
 fn display_size() -> (u32, u32) {
     static SIZE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+    if let Some(size) = asked_size() {
+        return size;
+    }
     *SIZE.get_or_init(|| {
-        let asked = std::env::var("VICTORY_DISPLAY_MODE").ok().and_then(|v| {
-            let (w, h) = v.trim().split_once(['x', 'X'])?;
-            Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?))
-        });
-        let size = match asked {
-            Some((w, h)) if (640..=7680).contains(&w) && (360..=4320).contains(&h) => (w, h),
-            _ => (3840, 2160),
-        };
+        let asked = std::env::var("VICTORY_DISPLAY_MODE")
+            .ok()
+            .and_then(|v| victory_core::parse_display_mode(&v));
+        let size = asked.unwrap_or(victory_core::DEFAULT_DISPLAY_MODE);
         tracing::info!(width = size.0, height = size.1, "display mode reported to the title");
         size
     })
 }
 
-/// The console's mode list: one 4K mode at 60 Hz (the title looks
-/// for a 120 Hz one to allow 120 Hz frame intervals).
+/// The size asked for by [`set_display_size`], packed `width << 32 | height`;
+/// 0 while nothing asked.
+static ASKED_SIZE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The size [`set_display_size`] asked for, if any.
+fn asked_size() -> Option<(u32, u32)> {
+    let packed = ASKED_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+    (packed != 0).then_some(((packed >> 32) as u32, packed as u32))
+}
+
+/// Sets the size the title is told its display is, which is what every
+/// screen-bound render target it makes takes: the resolution the game
+/// renders at. Call it before the title starts; this wins over
+/// `VICTORY_DISPLAY_MODE` and [`victory_core::DEFAULT_DISPLAY_MODE`]. A
+/// size outside what a console's output runs at (640 to 7680 across, 360 to
+/// 4320 down) is ignored.
+pub fn set_display_size(width: u32, height: u32) {
+    if victory_core::display_mode_ok(width, height) {
+        ASKED_SIZE.store(
+            u64::from(width) << 32 | u64::from(height),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+/// The console's mode list: one mode, [`display_size`] (640x480 unless
+/// asked otherwise), at 60 Hz (the title looks for a 120 Hz one to allow
+/// 120 Hz frame intervals).
 /// shortcut: fixed mode, not the host display's; report the host's rates if
 /// a title paces by them.
 extern "system" fn modes(

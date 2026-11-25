@@ -42,7 +42,7 @@ Tested on one machine: Windows 11, Intel i7-14700KF, NVIDIA RTX 4070 12 GB,
 | Saves | the game autosaves a checkpoint and loads it again |
 | First gameplay scene (the prologue) | renders: characters, textures, sky, sunlit exterior; HUD, pause menu and pad input work |
 | Light in shadow | missing: the game's ray-traced bounce light and ray-traced lamp and sun shadows do not run yet, so anything the sun does not hit directly is black |
-| Frame rate in the world | 8 to 10 fps in the first rooms: 97 to 104 ms a frame at about 3,850 draws, 122 ms in a heavier view (6,774 draws). 5 to 8.5 fps through the opening cutscene, by stretch (runs 271 to 273, with `VICTORY_CARD_WINDOWS_MB`). All measured with the switch set of run 253, which is off by default: `VICTORY_LEVELS_ON_DEMAND=1 VICTORY_ASYNC_SUBMIT=1 VICTORY_QUEUE2=1 VICTORY_INDIRECT_WINDOW=1 VICTORY_TEXTURE_NO_WAIT=1 VICTORY_MERGE_GAP=64 VICTORY_MERGE_RUNS=4096 VICTORY_STAGING_POOL=0 VICTORY_COPY_PLAIN=1 VICTORY_JOIN_PARTS=1 VICTORY_BACK_OWN_VIEW=1 VICTORY_INDIRECT_GATHER=1 VICTORY_CARD_REHASH_RUNS=1`. The plain defaults were last measured at 420 to 450 ms a frame and not since. It started at 3 to 6 seconds a frame |
+| Frame rate in the world | 8 to 10 fps in the first rooms: 97 to 104 ms a frame at about 3,850 draws, 122 ms in a heavier view (6,774 draws). 5 to 8.5 fps through the opening cutscene, by stretch (runs 271 to 273, with `VICTORY_CARD_WINDOWS_MB`). All measured at 3840x2160 with the switch set of run 253: `VICTORY_LEVELS_ON_DEMAND=1 VICTORY_ASYNC_SUBMIT=1 VICTORY_QUEUE2=1 VICTORY_INDIRECT_WINDOW=1 VICTORY_TEXTURE_NO_WAIT=1 VICTORY_MERGE_GAP=64 VICTORY_MERGE_RUNS=4096 VICTORY_STAGING_POOL=0 VICTORY_COPY_PLAIN=1 VICTORY_JOIN_PARTS=1 VICTORY_BACK_OWN_VIEW=1 VICTORY_INDIRECT_GATHER=1 VICTORY_CARD_REHASH_RUNS=1`. Most of that set is now the default (`[graphics] performance`, see "Resolution and frame rate"), together with a **640x480** display mode by default (`[graphics] display_mode`), which cuts the scene's pixel work by 27 times; the figures above are 3840x2160 frames and have not been measured again at 640x480. The plain defaults were last measured at 420 to 450 ms a frame and not since. It started at 3 to 6 seconds a frame |
 | Stability | no driver hang or device loss in normal runs (a hang introduced by the wave64 update was found and fixed: its barrier form for 64-lane programs is now off unless `VICTORY_WAVE_WIDE=1`) |
 
 ### Newest (2026-11-25, evening UTC)
@@ -525,6 +525,18 @@ Rendering:
 - Ray tracing, in progress and off by default: the game's own structure-builder programs translate, title memory can be read by raw address from shaders, the hardware ray/box and ray/triangle test is emulated in DXIL (checked against a reference on the GPU), and 59 of the 64 trace programs translate. Nothing is lit by it yet. See [docs/fork-ray-tracing.md](docs/fork-ray-tracing.md).
 
 Speed and memory:
+- The resolution the title renders at is a setting (`[graphics]
+  display_mode`, `VICTORY_DISPLAY_MODE`), 640x480 by default: every
+  screen-bound render target the title makes takes it, and the title's window
+  shows it enlarged by the largest whole factor that fits the screen. A run
+  writes the size into the title's own saved video settings
+  (`settings.xml`), which otherwise wins over the reported display mode.
+- The layer's measured speed switches are a profile (`[graphics]
+  performance`, `VICTORY_PERF`): tier 2, the default, lets our submissions
+  fly ahead of the title on a thread of ours, fetches run on a copy queue,
+  indirect records are clamped in windows and copies of title memory are made
+  in place. Tier 0 is how the layer ran before; a single switch set by hand
+  still wins.
 - Waits for memory values, write-watch queries and page queries no longer walk page tables per call.
 - Large title buffers get a copy in card memory, with shader writes found by hashing on the card.
 - Submissions can be sent ahead of the wait for the card (`VICTORY_LATE_WAIT`), with a relay thread that lands results as the card finishes (`VICTORY_RELAY`): in a first five-minute run the card's idle time behind the submitting thread fell from about 136 to 30 ms per frame.
@@ -534,10 +546,12 @@ Speed and memory:
 
 - Translated shaders get clean-up passes over the finished module (dead code, constant folding, reuse of values, branch facts); the pack's host instruction count falls by about 43 %, worth about 20 ms of GPU time per frame on the test machine (`VICTORY_SHADER_OPT=0` turns them off).
 
-Most of the newer speed changes sit behind environment switches that are off
-by default (`VICTORY_LATE_WAIT`, `VICTORY_RELAY`, `VICTORY_WIDE_BACK`,
-`VICTORY_CARD_BUFFERS_MIN_MB`, `VICTORY_INPLACE`, `VICTORY_BVH_BUILDER`, ...).
-Each is described in a comment where it is read.
+Most of the newer speed changes sit behind environment switches. The
+measured ones are now on together by default as the performance profile
+(`[graphics] performance` / `VICTORY_PERF`, see "Resolution and frame
+rate"), and the rest (`VICTORY_WIDE_BACK`, `VICTORY_CARD_BUFFERS_MIN_MB`,
+`VICTORY_INPLACE`, `VICTORY_BVH_BUILDER`, `VICTORY_MERGE_GAP`, ...) stay off
+until asked for. Each is described in a comment where it is read.
 
 ### Known problems
 
@@ -643,6 +657,95 @@ title's window has focus:
 | Q / E, Z / C | shoulders, triggers |
 | F / H | stick clicks |
 | Esc, Tab | Menu, View |
+
+### Resolution and frame rate
+
+The title renders at the resolution it is told its display has: every
+screen-bound render target it makes takes that size. In this fork that size
+is **640x480** unless you say otherwise, because the 3D scene is filled by
+pixel work and this is the one largest lever on its frame time (640x480 is a
+seventh of 1920x1080's pixels, a twenty-seventh of 3840x2160's, and the
+title's shadow maps and G-buffer shrink with it). Set it in `victory.toml`:
+
+```toml
+[graphics]
+display_mode = '640x480'   # or '1280x720', '1920x1080', ...
+performance = 2            # 0, 1 or 2: see below
+```
+
+or with `VICTORY_DISPLAY_MODE=1280x720` for one run (the variable wins). The
+title's window takes the render size shown enlarged by the largest whole
+factor that fits the screen, and the swap chain stretches the picture to it,
+so the resolution itself does not change (`VICTORY_WINDOW_SCALE=0` shows a
+640x480 window, `1` to `8` asks for a factor).
+
+**The title keeps its own copy of the resolution.** Its saved video settings
+(`<data>/<title id>/storage/settings/settings.xml`, `<video>` →
+`<resolutionFullscreen>`) win over the display mode the layer reports: a
+file written by an earlier run at 3840x2160 kept the title at 4K even once
+the reported mode was 640x480. A run therefore writes the configured size
+into that file before the title starts, and prints what it found:
+
+```
+title video    640x480 in settings.xml (was 3840x2160)
+```
+
+`VICTORY_DISPLAY_SETTINGS=0` leaves the file alone (the title's own display
+settings menu then decides, fed by the modes the layer reports).
+`<frameRateLimit>` and `<desiredFPS>` in the same file are the title's own
+cap: on a console build it is 30, so 30 frames a second is what to aim for.
+
+`performance` is the layer's profile of measured speed switches: 0 leaves
+every one at its own default (how the layer ran before), 1 turns on the ones
+the title cannot see, and 2 (the default) also the ones that overlap the card
+with the title's own work, which is where a 3D scene's frame time goes, and
+3 the two that cost exactness or memory:
+
+| Tier | Switches |
+|------|----------|
+| 1 | `VICTORY_COPY_PLAIN`, `VICTORY_TEXTURE_NO_WAIT` |
+| 2 | `VICTORY_LATE_WAIT=3` (and the relay), `VICTORY_ASYNC_SUBMIT`, `VICTORY_QUEUE2=1`, `VICTORY_INDIRECT_WINDOW`, `VICTORY_WINDOW_JUMP`, `VICTORY_MERGE_RUNS=4096` |
+| 3 | that, plus `VICTORY_MERGE_GAP=64` and `VICTORY_LEVELS_ON_DEMAND` |
+
+Tier 3 is the one that gives something up: the gap join is NOT exact (read
+the comment where it is read: a byte a shader of a flight in the air wrote
+inside a gap can be lost), and levels on demand let a texture level arrive a
+frame later while saving about 3 GB of the card's memory on the test
+machine. Tier 2 is the fastest set that is exact, and the default.
+
+Each of them is still read from `VICTORY_<NAME>`, and a variable set by hand
+wins over the tier, so `VICTORY_PERF=2 VICTORY_INDIRECT_WINDOW=0` is the fast
+set without draw windows; the run prints what is in force as its
+`performance` line. Every switch documents at its own definition what it
+assumes: the tier 2 ones assume the title does not rewrite memory its own
+earlier submission is still reading (the console's card reads title memory
+when it runs a list, later than the submission too). `VICTORY_PERF=1` is the
+conservative set if a scene ever shows an artefact, and `VICTORY_PERF=0`
+reproduces the layer's old behavior exactly.
+
+If a scene is still not at 30 frames a second, in the order that pays:
+
+1. `VICTORY_PERF=3` — tier 2 plus the two that cost the title's own frame
+   time (see above; it gives up exactness).
+2. `VICTORY_WINDOW_MOST=256` — records clamped per pass, 1024 at most. The
+   per-record clamp is the card's largest single cost in the first rooms;
+   bigger windows mean fewer of its passes. The window costs nothing until
+   it is used, and the list's budget still bounds what they charge.
+3. Lower `display_mode`. If the frame log puts the card's time in the
+   title's own lists with the per-record clamp rather than in pixel work,
+   the draw-path switches (`VICTORY_INDIRECT_WINDOW`, `VICTORY_WINDOW_JUMP`)
+   are the ones that pay.
+2. `VICTORY_MERGE_GAP=64` — joins the title's changed bytes over small gaps
+   under flights' writes, which settles the flights less; NOT exact (read the
+   comment where it is read: a byte a shader of a flight in the air wrote in
+   a gap can be lost).
+3. `VICTORY_LEVELS_ON_DEMAND=1` — levels of a texture in the card's memory
+   only while the title holds them; mostly memory (3 GB less on the test
+   machine), also less texture work a frame.
+4. Measure before and after: the frame rate is drawn into the top left corner
+   of every frame (`VICTORY_FPS_COUNTER=0` turns it off), and a diagnostics
+   build (`cargo build --profile diag -p victory --features diagnostics`) with
+   `VICTORY_FRAME_LOG=1` says what a frame was made of.
 
 ### Starting the title with its shaders already translated
 

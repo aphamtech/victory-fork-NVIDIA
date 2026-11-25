@@ -1841,8 +1841,9 @@ fn joined_over(runs: Vec<(usize, usize)>, gap: usize) -> Vec<(usize, usize)> {
 
 /// The gap, in bytes, over which the title bytes put into a copy in the
 /// card's memory under flights' shader writes are joined into one run
-/// (`VICTORY_MERGE_GAP`, 0 to 64; 0 by default: only the bytes the title
-/// changed go up, as before).
+/// (`VICTORY_MERGE_GAP`, 0 to 64; 0 unless the performance profile's tier 3
+/// asks 64: only the bytes the title changed go up, as before). The one
+/// switch in any tier that is not exact.
 ///
 /// Run 219: the title rewrites some hundred pages of its big buffer a
 /// frame while flights that may write that buffer are in the air, and
@@ -1860,7 +1861,7 @@ fn joined_over(runs: Vec<(usize, usize)>, gap: usize) -> Vec<(usize, usize)> {
 /// the default for that reason.
 fn merge_gap() -> usize {
     static GAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *GAP.get_or_init(|| std::env::var("VICTORY_MERGE_GAP").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(0, |n| n.min(64)))
+    *GAP.get_or_init(|| crate::settings::number("VICTORY_MERGE_GAP", 3, 64).map_or(0, |n| n.min(64) as usize))
 }
 
 /// Whether a refresh of a copy in the card's memory stores and sends on
