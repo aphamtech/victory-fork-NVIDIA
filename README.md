@@ -119,6 +119,27 @@ with all of them, from about 120 ms in the morning. Still far from the console's
   `=alt` form (twenty seconds on, twenty off, each change said in the
   log) so that one run measures both in the same scene.
 
+### Newest (2026-11-25, this build): shaders translated before the launch
+
+- `victory precompile` (and `victory run ... --precompile`): every shader in
+  the game folder is translated into the run's shader cache beforehand, so
+  the loading screen no longer waits for it. Ported from the Belobug/AMD
+  fork's `precompile` and progress window, with the wave size asked of this
+  host's card (32 on NVIDIA) so the entries match what a run looks up. On
+  this machine `shaders.rpf` holds 26,503 containers (614 duplicates, 254
+  the translator still refuses); a cold pass took 115 s writing 9.6 GB to
+  the cache, a warm one 2.9 s.
+- The four switches this fork measured and verified are now on by default,
+  each still turned off with `=0`: `VICTORY_JOIN_PARTS` (about 6 %),
+  `VICTORY_BACK_OWN_VIEW` (about 9 %, 0 stores astray in 1.36 million),
+  `VICTORY_INDIRECT_GATHER` and `VICTORY_CARD_REHASH_RUNS` (104 -> 97 ms a
+  frame at 3,800 draws).
+- The host device is made on the adapter Windows names for a game (the
+  discrete card; `IDXGIFactory6::EnumAdapterByGpuPreference` with
+  `HIGH_PERFORMANCE`) instead of whatever the default enumeration returns,
+  and the run logs the adapter and its VRAM. On this machine that is the RTX
+  4070.
+
 **Update, the same night: the first room now renders right on the test
 machine** (walls, textures, people, lamps), at 190 to 450 ms a frame (2 to 5
 frames a second): the picture work has caught up, the frame rate has not.
@@ -304,6 +325,12 @@ Tools and diagnostics:
   shader ahead of a run, on the processor only (about 4.5 to 6.5 minutes
   here); the shader cache is keyed on the translator's source, so a new
   build that does not touch the translator starts warm.
+- `victory precompile` does the same for a whole folder, naming the shaders
+  by their DXIL part and asking the host GPU its wave size (32 on NVIDIA) so
+  the run finds every translation in the cache: nothing is translated while
+  the loading screen waits. `victory run ... --precompile` runs it before
+  starting the title. See "Starting the title with its shaders already
+  translated" below.
 - Counters, all off or diagnostics-only: `VICTORY_MERGE_RACE=1` (title bytes
   a copy-back is about to put back to older values: none found in 138,000
   copy-backs), `VICTORY_WALLS_TRACE`, `VICTORY_CARD_ACCOUNTING`, and a census
@@ -417,8 +444,13 @@ Run the title:
 
 ```powershell
 cargo build --release -p victory
-target\release\victory.exe run <game dir>\<the title's exe> --execute
+target\release\victory.exe run <game dir>\<the title's exe> --execute --precompile
 ```
+
+`--precompile` translates the title's shaders into the shader cache before
+the title starts, instead of during the loading screen; on a warm cache it
+takes seconds. See "Starting the title with its shaders already translated"
+below.
 
 The window caption shows the framerate. Saves, settings and `crashes.log`
 are kept under the data folder (default `%LOCALAPPDATA%\victory\data`), derived
@@ -436,6 +468,31 @@ title's window has focus:
 | F / H | stick clicks |
 | Esc, Tab | Menu, View |
 
+### Starting the title with its shaders already translated
+
+A first launch translates the title's shaders as the loading screen waits, a
+few thousand of them. `victory precompile` does that beforehand, in parallel,
+into the same cache the run reads:
+
+```powershell
+target\release\victory.exe precompile                      # the configured game folder
+target\release\victory.exe precompile <game dir> --jobs 20 # or one folder, N threads
+target\release\victory.exe run <game dir>\<the title's exe> --execute
+```
+
+It prints what it found (containers, duplicates, translations stored now,
+already in the cache, failed), keeps a progress window unless `--no-gui`, and
+`--validate` checks every emitted shader with `dxil.dll`. Shaders the
+translator cannot handle are listed with an example each and are the same
+ones the run refuses.
+
+The entries are keyed on the translator's source, every switch it reads and
+the host GPU's wave size (`--host-wave`, asked of the card by default), so
+run the same build with the same environment as the run, and precompile
+again after a `git pull` that touches `victory-shader`. A folder scanned is
+read whole, so files above 4 GiB (the big `.rpf` archives) are skipped: their
+shaders come from `shaders.rpf` and the executable, which are covered.
+
 ## Commands
 
 ```
@@ -444,8 +501,10 @@ victory census [paths...] [--missing] [--strict]
 victory lib-exports <import.lib> [--list]
 victory shader-info [paths...] [--verbose] [--disasm]
 victory translate [paths...] [--validate] [--pipelines] [--list] [--jobs N]
-victory run <exe> [--execute] [--unimplemented trap|zero] [--strict]
-            [--console series-x|series-s] [-- <title arguments>]
+victory precompile [paths...] [--host-wave N] [--jobs N] [--strict]
+                   [--validate] [--no-gui]
+victory run <exe> [--execute] [--precompile] [--unimplemented trap|zero]
+            [--strict] [--console series-x|series-s] [-- <title arguments>]
 victory config
 ```
 

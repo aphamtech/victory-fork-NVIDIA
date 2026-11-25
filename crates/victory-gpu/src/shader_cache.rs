@@ -77,18 +77,30 @@ fn build() -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
-/// The offline warm-up (`victory translate --warm`): `container` is
-/// translated into the cache unless it is there already. `Ok(true)`: it
-/// was translated now. Needs [`use_shader_cache`] and the same host facts
-/// the run will have (`victory_shader::emit::translation_fingerprint`).
-pub fn warm(container: &[u8]) -> Result<bool, String> {
+/// The offline warm-up (`victory precompile`, `victory translate --warm`):
+/// `container` is translated into the cache unless it is there already, and
+/// the translation comes back with `true` when it was made now (false: the
+/// cache held it). Needs [`use_shader_cache`] and the same host facts the
+/// run will have (`victory_shader::emit::translation_fingerprint`), which
+/// includes the widest wave of the host GPU ([`host_wave_max`]).
+pub fn warm(container: &[u8]) -> Result<(HostShader, bool), String> {
     let cache = CACHE.get().ok_or("no shader cache")?;
     let ran = AtomicBool::new(false);
     let translate = |c: &[u8]| {
         ran.store(true, Ordering::Relaxed);
         victory_shader::emit::translate(c).map_err(|e| e.to_string())
     };
-    cached(cache, &build(), container, translate).map(|_| ran.load(Ordering::Relaxed))
+    let shader = cached(cache, &build(), container, translate)?;
+    Ok((shader, ran.load(Ordering::Relaxed)))
+}
+
+/// The widest wave this host's GPU runs (`WaveLaneCountMax`): 32 on NVIDIA,
+/// 64 on AMD's RDNA. A run translates the title's shaders for what its own
+/// device says and the cache keys on it, so a step that translates them
+/// ahead of a run must ask the same question ([`host_wave_max`]).
+/// `None` without a host GPU at shader model 6.6.
+pub fn host_wave_max() -> Option<u32> {
+    crate::host::query_wave_max()
 }
 
 /// The translation of a console shader container, from the cache when

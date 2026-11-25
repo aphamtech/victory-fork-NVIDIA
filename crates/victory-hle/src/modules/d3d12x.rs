@@ -40,12 +40,46 @@ fn host_gpu_failed(what: &str) -> ! {
 pub fn warm_shader(container: &[u8]) -> Result<bool, String> {
     #[cfg(windows)]
     {
-        victory_gpu::shader_cache::warm(container)
+        victory_gpu::shader_cache::warm(container).map(|(_, translated)| translated)
     }
     #[cfg(not(windows))]
     {
         let _ = container;
         Err("no shader cache on this host".into())
+    }
+}
+
+/// The widest wave this host's GPU runs (32 on NVIDIA, 64 on AMD RDNA), the
+/// size a run translates the title's shaders for; `None` when no Direct3D 12
+/// device can be asked. A step translating them ahead of a run must set the
+/// translator to what this says (`victory_shader::emit::set_host_max_wave`),
+/// or the run will not find its translations in the cache.
+pub fn host_wave_max() -> Option<u32> {
+    #[cfg(windows)]
+    {
+        victory_gpu::shader_cache::host_wave_max()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Translates the console shader `container` into the shader cache a run
+/// reads (with [`use_shader_cache`]) instead of at pipeline creation, so a
+/// step before a run leaves every translation where the run finds it. The
+/// emitted DXIL container comes back with it (for `--validate`), and `true`
+/// when the cache already held the translation (false: it was made now).
+pub fn precompile_shader(container: &[u8]) -> Result<(Vec<u8>, bool), String> {
+    #[cfg(windows)]
+    {
+        // `warm` says whether it translated now; here the cache is what asked.
+        victory_gpu::shader_cache::warm(container).map(|(shader, translated)| (shader.dxil, !translated))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = container;
+        Err("no shader translation on this host".to_owned())
     }
 }
 

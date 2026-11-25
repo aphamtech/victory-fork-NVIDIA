@@ -5,6 +5,8 @@
 
 mod census;
 mod inspect;
+mod precompile;
+mod progress;
 mod run;
 mod shader;
 mod translate;
@@ -92,6 +94,31 @@ enum Command {
         #[arg(long)]
         warm: Option<PathBuf>,
     },
+    /// Translate every shader found into the shader cache a run reads, so a
+    /// first launch does not translate them while the loading screen waits.
+    /// Run it with the same environment (and the same build) as the run.
+    Precompile {
+        paths: Vec<PathBuf>,
+        /// The widest wave the host GPU runs, in lanes (32 for NVIDIA, 64
+        /// for AMD RDNA): what a run translates its shaders for. Default:
+        /// ask the host GPU.
+        #[arg(long, value_name = "LANES")]
+        host_wave: Option<u32>,
+        /// Worker threads (default: every logical core).
+        #[arg(long)]
+        jobs: Option<usize>,
+        /// Fail (exit status 1) when a shader could not be translated.
+        #[arg(long)]
+        strict: bool,
+        /// Check every emitted shader with dxil.dll's validator
+        /// (`VICTORY_DXIL`, else the newest Windows SDK's) and report the
+        /// ones the host's driver would refuse.
+        #[arg(long)]
+        validate: bool,
+        /// No progress window (it shows the counts and the rate).
+        #[arg(long)]
+        no_gui: bool,
+    },
     /// Prepare, map and bind a title executable; with --execute, run it.
     Run {
         exe: PathBuf,
@@ -107,6 +134,11 @@ enum Command {
         /// The console model the title sees (device type, memory).
         #[arg(long, value_enum, default_value_t = Console::SeriesX)]
         console: Console,
+        /// Translate the title's shaders into the shader cache before the
+        /// title starts (as `victory precompile` does), so the loading screen
+        /// does not wait for them. Shaders the cache holds are skipped.
+        #[arg(long)]
+        precompile: bool,
         /// Arguments for the title, after `--` (it reads the whole command
         /// line; a title that relaunches itself passes some).
         #[arg(last = true)]
@@ -174,14 +206,37 @@ fn main() -> Result<()> {
             }
             translate::run(paths, validate, pipelines, list, jobs)
         }
+        Command::Precompile {
+            paths,
+            host_wave,
+            jobs,
+            strict,
+            validate,
+            no_gui,
+        } => precompile::run(paths, host_wave, jobs, strict, !no_gui, validate),
         Command::Run {
             exe,
             unimplemented,
             strict,
             execute,
             console,
+            precompile,
             title_args: _,
-        } => run::run(&exe, unimplemented, strict, execute, console),
+        } => {
+            let cfg = victory_core::Config::load()?;
+            if precompile {
+                // The title's shaders live beside its executable and in its
+                // archives: the game folder is the whole of it.
+                let paths: Vec<PathBuf> = match &cfg.game_dir {
+                    Some(dir) => vec![dir.clone()],
+                    None => exe.parent().map(|p| vec![p.to_path_buf()]).unwrap_or_default(),
+                };
+                if let Err(e) = precompile::run(paths, None, None, false, true, false) {
+                    eprintln!("precompile: {e:#} (the run translates them as it goes)");
+                }
+            }
+            run::run(&exe, unimplemented, strict, execute, console)
+        }
         Command::Config => show_config(),
     }
 }

@@ -588,6 +588,48 @@ pub(crate) fn host() -> Option<&'static Host> {
     .as_ref()
 }
 
+/// The adapter Windows prefers for a game: the discrete card on a machine
+/// that has one beside an integrated GPU, and the one D3D12 would take when
+/// given no adapter. Asked explicitly so that the device, its memory and its
+/// queues all land on the card the title's picture is drawn on.
+fn high_performance_adapter() -> Option<IDXGIAdapter> {
+    // SAFETY: plain DXGI enumeration; nothing is kept but the adapter.
+    unsafe {
+        let factory: IDXGIFactory6 =
+            CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).ok()?;
+        factory
+            .EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)
+            .ok()
+    }
+}
+
+/// The widest wave the host GPU runs (`WaveLaneCountMax`), asked of a device
+/// made for the question alone: a step that translates the title's shaders
+/// ahead of a run needs it before any run has made the full host, and the
+/// shader cache keys on it. `None` without a device at shader model 6.6.
+pub(crate) fn query_wave_max() -> Option<u32> {
+    // SAFETY: plain D3D12 object creation with valid descriptions; the
+    // device is asked one feature and dropped.
+    unsafe {
+        let mut device: Option<ID3D12Device> = None;
+        let adapter = high_performance_adapter();
+        let adapter = adapter
+            .as_ref()
+            .and_then(|a| a.cast::<windows::core::IUnknown>().ok());
+        D3D12CreateDevice(adapter.as_ref(), D3D_FEATURE_LEVEL_12_0, &mut device).ok()?;
+        let device = device?;
+        let mut o1 = D3D12_FEATURE_DATA_D3D12_OPTIONS1::default();
+        device
+            .CheckFeatureSupport(
+                D3D12_FEATURE_D3D12_OPTIONS1,
+                (&raw mut o1).cast(),
+                size_of_val(&o1) as u32,
+            )
+            .ok()?;
+        (o1.WaveLaneCountMax > 0).then_some(o1.WaveLaneCountMax)
+    }
+}
+
 fn create() -> windows::core::Result<Host> {
     crate::drvwatch::start();
     crate::spread::start();
@@ -640,9 +682,32 @@ fn create() -> windows::core::Result<Host> {
             D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?;
             tracing::info!("host device on the software adapter (WARP)");
         } else {
-            D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device)?;
+            // The card Windows picks for a game, named rather than left to
+            // the default (`high_performance_adapter`).
+            let adapter = high_performance_adapter();
+            if let Some(adapter) = &adapter
+                && let Ok(desc) = adapter.cast::<IDXGIAdapter1>().and_then(|a| a.GetDesc1())
+            {
+                let name = String::from_utf16_lossy(
+                    &desc.Description[..desc
+                        .Description
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(desc.Description.len())],
+                );
+                tracing::info!(
+                    adapter = %name,
+                    vram_mb = desc.DedicatedVideoMemory >> 20,
+                    "host adapter (high performance)"
+                );
+            }
+            let adapter = adapter
+                .as_ref()
+                .and_then(|a| a.cast::<windows::core::IUnknown>().ok());
+            D3D12CreateDevice(adapter.as_ref(), D3D_FEATURE_LEVEL_12_0, &mut device)?;
         }
         let device = device.ok_or_else(windows::core::Error::empty)?;
+
         // `VICTORY_D3D12_BACKGROUND=0`: the runtime's background work (the
         // driver compiling shaders again on the "D3D Background Thread"s,
         // for minutes after pipelines were made or loaded) is switched off.
@@ -1799,8 +1864,8 @@ void main(uint3 group : SV_GroupID, uint t : SV_GroupIndex) {
 
 /// Whether the pieces hashed again after ranges were sent up to a copy in
 /// the card's memory are hashed in runs of pieces that touch, each piece
-/// once (`VICTORY_CARD_REHASH_RUNS=1`; off by default), and not in a pass
-/// per range sent up.
+/// once (`VICTORY_CARD_REHASH_RUNS=1`; on by default in this fork, `=0`
+/// turns it off), and not in a pass per range sent up.
 ///
 /// These passes are ours, they run on the card before every submission's
 /// lists, and no timing so far names them: each walks its 64 KiB pieces
@@ -1819,9 +1884,9 @@ fn rehash_runs() -> bool {
     /// 0 off, 1 on, 2 in turn.
     static MODE: OnceLock<u8> = OnceLock::new();
     match *MODE.get_or_init(|| match std::env::var("VICTORY_CARD_REHASH_RUNS").as_deref() {
-        Ok("1") => 1,
+        Ok("0") => 0,
         Ok("alt") => 2,
-        _ => 0,
+        _ => 1,
     }) {
         0 => false,
         1 => true,

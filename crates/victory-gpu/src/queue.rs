@@ -555,15 +555,18 @@ thread_local! {
 /// next ones are prepared. Each queue with a part taken keeps the mark
 /// [`Held::Running`] at the head of its line until the part is sent:
 /// what the title gives the queue meanwhile, signals too, stays behind.
+///
+/// On by default in this fork (`VICTORY_JOIN_PARTS=0` turns it off): it was
+/// measured at about 6 % of a frame, and a run without it draws the same.
 #[cfg(windows)]
 fn join_parts() -> bool {
     /// 0 off, 1 on, 2 in turn.
     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
     let mode = *MODE.get_or_init(|| {
         let mode = match std::env::var("VICTORY_JOIN_PARTS").as_deref() {
-            Ok("1") => 1,
+            Ok("0") => 0,
             Ok("alt") => 2,
-            _ => 0,
+            _ => 1,
         };
         if mode != 0 {
             tracing::info!(

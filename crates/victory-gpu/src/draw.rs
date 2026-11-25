@@ -243,14 +243,16 @@ fn jump_windows() -> bool {
 /// such records, in place of a pass of ours in front of its draw
 /// (`crate::indirect::gather`; `VICTORY_INDIRECT_GATHER=1`; `alt`: twenty
 /// seconds with, twenty without, in turn, each change said in the log).
-/// Off by default. Needs [`windows`].
+/// On by default in this fork: about 600 of the ~1,600 draws that missed a
+/// window a frame are served, and with the rehash runs 104 -> 97 ms a frame
+/// at 3,800 draws. `=0` turns it off. Needs [`windows`].
 fn gathers() -> bool {
     /// 0 off, 1 on, 2 in turn.
     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
     match *MODE.get_or_init(|| match std::env::var("VICTORY_INDIRECT_GATHER").as_deref() {
-        Ok("1") => 1,
+        Ok("0") => 0,
         Ok("alt") => 2,
-        _ => 0,
+        _ => 1,
     }) {
         0 => false,
         1 => true,
