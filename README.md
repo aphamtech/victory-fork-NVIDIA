@@ -642,6 +642,22 @@ the title starts, instead of during the loading screen; on a warm cache it
 takes seconds. See "Starting the title with its shaders already translated"
 below.
 
+### Launcher scripts
+
+`scripts\` holds ready-made Windows launchers that wrap the commands above.
+Set `VICTORY_GAME_DIR` (or edit `scripts\config.bat`) to point at your dump;
+each script builds `victory.exe` on first use.
+
+| Script | What it does |
+|--------|--------------|
+| `scripts\config.bat` | shared settings the others call (game folder, exe, config file) |
+| `scripts\rebuild-victory.bat` | build `victory.exe`; `rebuild-victory.bat diag` builds the diagnostics one |
+| `scripts\launch-game.bat` | precompile the shaders, then run the title |
+| `scripts\launch-game-fast.bat` | the same with the faster switch set below |
+| `scripts\precompile-shaders.bat` | translate the shaders into the cache only |
+| `scripts\check-setup.bat` | show and check the resolved paths |
+| `scripts\launch-game-diagnostics.bat` | run the diagnostics build |
+
 The window caption shows the framerate. Saves, settings and `crashes.log`
 are kept under the data folder (default `%LOCALAPPDATA%\victory\data`), derived
 data under the cache folder.
