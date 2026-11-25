@@ -16,6 +16,8 @@
 //! performance profile. Planned: `present` (swap chain).
 
 #[cfg(all(windows, feature = "diagnostics"))]
+mod backreads;
+#[cfg(all(windows, feature = "diagnostics"))]
 mod capture;
 #[cfg(windows)]
 mod cardmeter;
@@ -78,6 +80,8 @@ pub mod signature;
 mod texture;
 #[cfg(windows)]
 mod watch;
+#[cfg(windows)]
+mod texback;
 
 #[cfg(windows)]
 pub use host::on_failure;
